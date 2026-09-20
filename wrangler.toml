@@ -1,0 +1,11 @@
+name = "sublime-api"
+main = "worker.js"
+compatibility_date = "2026-09-20"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sublime-catalogo"
+database_id = "6844d231-8b75-483a-b8a1-0de7e4b8668a"
+
+[observability]
+enabled = true

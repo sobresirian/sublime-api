@@ -1,0 +1,4 @@
+ALTER TABLE productos ADD COLUMN category TEXT DEFAULT '';
+ALTER TABLE productos ADD COLUMN status TEXT DEFAULT 'active';
+ALTER TABLE productos ADD COLUMN fragrantica TEXT DEFAULT '';
+ALTER TABLE productos ADD COLUMN notes TEXT DEFAULT '';
