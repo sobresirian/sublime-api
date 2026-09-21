@@ -59,7 +59,7 @@ async function getProductos(env) {
       name: p.name,
       category: p.category || "",
       price_usd: p.price_usd == null ? 0 : Number(p.price_usd),
-      img: p.img || "",
+      has_img: !!p.img,
       sort: p.sort || 0,
       status: p.status === "out_of_stock" ? "out_of_stock" : "active",
       fragrantica: p.fragrantica || ""
