@@ -112,7 +112,7 @@ async function postProductos(request, env) {
   }
   const cat = String(body.categoria || "").trim();
   const now = new Date().toISOString();
-  const existing = await db.prepare("SELECT id, name, price_usd, img, sort, visible, status FROM productos WHERE category = ?").bind(cat).all();
+  const existing = await db.prepare("SELECT id, name, price_usd, img, sort, visible, status, category FROM productos WHERE category = ? OR category = ''").bind(cat).all();
   const byKey = new Map();
   for (const e of existing.results) byKey.set(slugify(e.name), e);
   const touched = new Set();
@@ -128,8 +128,8 @@ async function postProductos(request, env) {
     const ex = byKey.get(key);
     if (ex) {
       touched.add(key);
-      if (ex.price_usd !== price || (ex.sort || 0) !== i || ex.status !== "active") {
-        stmts.push(db.prepare("UPDATE productos SET price_usd = ?, sort = ?, status = 'active', updated_at = ? WHERE id = ?").bind(price, i, now, ex.id));
+      if (ex.price_usd !== price || (ex.sort || 0) !== i || ex.status !== "active" || (ex.category || "") !== cat) {
+        stmts.push(db.prepare("UPDATE productos SET price_usd = ?, sort = ?, category = ?, status = 'active', updated_at = ? WHERE id = ?").bind(price, i, cat, now, ex.id));
         updates++;
       }
     } else {
