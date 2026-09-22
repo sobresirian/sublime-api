@@ -112,7 +112,7 @@ async function postProductos(request, env) {
   }
   const cat = String(body.categoria || "").trim();
   const now = new Date().toISOString();
-  const existing = await db.prepare("SELECT id, name, price_usd, img, sort, visible, status, category FROM productos WHERE category = ? OR category = ''").bind(cat).all();
+  const existing = await db.prepare("SELECT id, name, price_usd, img, sort, visible, status, category FROM productos").all();
   const byKey = new Map();
   for (const e of existing.results) byKey.set(slugify(e.name), e);
   const touched = new Set();
@@ -128,8 +128,10 @@ async function postProductos(request, env) {
     const ex = byKey.get(key);
     if (ex) {
       touched.add(key);
-      if (ex.price_usd !== price || (ex.sort || 0) !== i || ex.status !== "active" || (ex.category || "") !== cat) {
-        stmts.push(db.prepare("UPDATE productos SET price_usd = ?, sort = ?, category = ?, status = 'active', updated_at = ? WHERE id = ?").bind(price, i, cat, now, ex.id));
+      const newImg = String(p.img || "");
+      const imgChanged = !!newImg && ex.img !== newImg;
+      if (ex.price_usd !== price || (ex.sort || 0) !== i || ex.status !== "active" || (ex.category || "") !== cat || imgChanged) {
+        stmts.push(db.prepare("UPDATE productos SET price_usd = ?, sort = ?, category = ?, status = 'active', img = COALESCE(?, img), updated_at = ? WHERE id = ?").bind(price, i, cat, newImg || null, now, ex.id));
         updates++;
       }
     } else {
@@ -138,7 +140,8 @@ async function postProductos(request, env) {
     }
   }
   for (const [key, e] of byKey) {
-    if (!touched.has(key) && (e.status || "active") !== "out_of_stock") {
+    const eCat = e.category || "";
+    if (!touched.has(key) && (eCat === cat || eCat === "") && (e.status || "active") !== "out_of_stock") {
       stmts.push(db.prepare("UPDATE productos SET status = 'out_of_stock', updated_at = ? WHERE id = ?").bind(now, e.id));
       updates++;
     }
