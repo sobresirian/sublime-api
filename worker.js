@@ -269,7 +269,9 @@ async function getFeedMetaGs(env) {
     const brand = name.split(" ")[0] || "SUBLIME";
     const title = name || "Perfume SUBLIME";
     const desc = "Perfume " + title + " original. Venta mayorista de SUBLIME Perfumería.";
-    lines.push([p.id, title, desc, "in stock", "new", gs + " Gs.", LINK, IMG + p.id, brand, CAT, "FALSE"].map(esc).join(","));
+    // Google Merchant Center quiere el código ISO 4217, no «Gs.»: con «Gs.»
+    // rechaza el precio y el producto queda sin valor en la cuenta.
+    lines.push([p.id, title, desc, "in stock", "new", gs + " PYG", LINK, IMG + p.id, brand, CAT, "FALSE"].map(esc).join(","));
   }
   return new Response(lines.join("\n"), { status: 200, headers: { "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "public, max-age=2700", "Access-Control-Allow-Origin": "*" } });
 }
