@@ -37,6 +37,7 @@ var worker_default = {
         return patchProductos(request, env, id);
       }
       if (url.pathname === "/api/config" && request.method === "GET") return getConfig(env);
+      if (url.pathname === "/api/config" && request.method === "PATCH") return patchConfig(request, env);
       if (url.pathname === "/api/img" && request.method === "GET") return getImg(request, env);
       if (url.pathname === "/api/feed/meta.csv" && request.method === "GET") return getFeedMeta(env);
       if (url.pathname === "/api/feed/meta-gs.csv" && request.method === "GET") return getFeedMetaGs(env);
@@ -50,7 +51,7 @@ var worker_default = {
 
 async function getProductos(env) {
   const db = env.DB;
-  const prods = await db.prepare("SELECT id, name, category, price_usd, img, sort, status, fragrantica FROM productos WHERE visible = 1 ORDER BY category ASC, sort ASC, name ASC").all();
+  const prods = await db.prepare("SELECT id, name, category, price_usd, img, sort, status, fragrantica, gs_sin_desc FROM productos WHERE visible = 1 ORDER BY category ASC, sort ASC, name ASC").all();
   const config = await getConfigObj(env);
   return new Response(JSON.stringify({
     version: 2,
@@ -62,7 +63,8 @@ async function getProductos(env) {
       has_img: !!p.img,
       sort: p.sort || 0,
       status: p.status === "out_of_stock" ? "out_of_stock" : "active",
-      fragrantica: p.fragrantica || ""
+      fragrantica: p.fragrantica || "",
+      gs_sin_desc: p.gs_sin_desc ? 1 : 0
     })),
     config: {
       rate_gs: Number(config.rate_gs || 0),
@@ -93,6 +95,29 @@ async function getConfig(env) {
 }
 __name(getConfig, "getConfig");
 
+async function patchConfig(request, env) {
+  const token = request.headers.get("Authorization") || "";
+  const expected = env.PUBLISH_TOKEN || "";
+  if (!expected || !token.startsWith("Bearer ") || token.slice(7) !== expected) {
+    return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: CORS });
+  }
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return new Response(JSON.stringify({ error: "Body invalido" }), { status: 400, headers: CORS });
+  }
+  const updates = [];
+  if (body.rate_gs != null) updates.push(["rate_gs", String(body.rate_gs)]);
+  if (body.rate_ars != null) updates.push(["rate_ars", String(body.rate_ars)]);
+  if (!updates.length) {
+    return new Response(JSON.stringify({ error: "No hay campos para actualizar" }), { status: 400, headers: CORS });
+  }
+  updates.push(["updated_at", new Date().toISOString()]);
+  const db = env.DB;
+  await db.batch(updates.map(([k, v]) => db.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(k, v)));
+  return new Response(JSON.stringify({ success: true, updated: updates.map(([k]) => k) }), { status: 200, headers: CORS });
+}
+__name(patchConfig, "patchConfig");
+
 function auth(req, env) {
   const token = req.headers.get("Authorization") || "";
   const expected = env.PUBLISH_TOKEN || "";
@@ -112,7 +137,7 @@ async function postProductos(request, env) {
   }
   const cat = String(body.categoria || "").trim();
   const now = new Date().toISOString();
-  const existing = await db.prepare("SELECT id, name, price_usd, img, sort, visible, status, category FROM productos").all();
+  const existing = await db.prepare("SELECT id, name, price_usd, img, sort, visible, status, category, gs_sin_desc FROM productos").all();
   const byKey = new Map();
   for (const e of existing.results) byKey.set(slugify(e.name), e);
   const touched = new Set();
@@ -124,18 +149,20 @@ async function postProductos(request, env) {
     const name = String(p.name || "").slice(0, 200).trim();
     if (!name) continue;
     const price = Number(p.price_usd) || 0;
+    const sinDesc = p.gs_sin_desc ? 1 : 0;
     const key = slugify(name);
     const ex = byKey.get(key);
     if (ex) {
       touched.add(key);
       const newImg = String(p.img || "");
       const imgChanged = !!newImg && ex.img !== newImg;
-      if (ex.price_usd !== price || (ex.sort || 0) !== i || ex.status !== "active" || (ex.category || "") !== cat || imgChanged) {
-        stmts.push(db.prepare("UPDATE productos SET price_usd = ?, sort = ?, category = ?, status = 'active', img = COALESCE(?, img), updated_at = ? WHERE id = ?").bind(price, i, cat, newImg || null, now, ex.id));
+      const descChanged = (ex.gs_sin_desc ? 1 : 0) !== sinDesc;
+      if (ex.price_usd !== price || (ex.sort || 0) !== i || ex.status !== "active" || (ex.category || "") !== cat || imgChanged || descChanged) {
+        stmts.push(db.prepare("UPDATE productos SET price_usd = ?, sort = ?, category = ?, status = 'active', img = COALESCE(?, img), gs_sin_desc = ?, updated_at = ? WHERE id = ?").bind(price, i, cat, newImg || null, sinDesc, now, ex.id));
         updates++;
       }
     } else {
-      stmts.push(db.prepare("INSERT INTO productos (id, name, price_usd, img, sort, visible, category, status, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, 'active', ?)").bind(String(p.id || key), name, price, String(p.img || ""), i, cat, now));
+      stmts.push(db.prepare("INSERT INTO productos (id, name, price_usd, img, sort, visible, category, status, gs_sin_desc, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, 'active', ?, ?)").bind(String(p.id || key), name, price, String(p.img || ""), i, cat, sinDesc, now));
       inserts++;
     }
   }
@@ -175,6 +202,7 @@ async function patchProductos(request, env, id) {
   if (body.fragrantica !== undefined) { sets.push("fragrantica = ?"); vals.push(String(body.fragrantica || "").slice(0, 400)); }
   if (body.notes !== undefined) { sets.push("notes = ?"); vals.push(String(body.notes || "").slice(0, 1000)); }
   if (body.category !== undefined) { sets.push("category = ?"); vals.push(String(body.category || "").trim()); }
+  if (body.gs_sin_desc !== undefined) { sets.push("gs_sin_desc = ?"); vals.push(body.gs_sin_desc ? 1 : 0); }
   if (body.visible !== undefined) { sets.push("visible = ?"); vals.push(body.visible ? 1 : 0); }
   if (!sets.length) return new Response(JSON.stringify({ error: "No hay campos para actualizar" }), { status: 400, headers: CORS });
   sets.push("updated_at = ?");
@@ -225,7 +253,7 @@ __name(getFeedMeta, "getFeedMeta");
 
 async function getFeedMetaGs(env) {
   const db = env.DB;
-  const prods = await db.prepare("SELECT id, name, price_usd FROM productos WHERE visible = 1 AND status = 'active' ORDER BY sort ASC, name ASC").all();
+  const prods = await db.prepare("SELECT id, name, price_usd, gs_sin_desc FROM productos WHERE visible = 1 AND status = 'active' ORDER BY sort ASC, name ASC").all();
   const config = await getConfigObj(env);
   const rate_gs = Number(config.rate_gs || 0);
   const DISCOUNT_GS_USD = 2;
@@ -237,7 +265,7 @@ async function getFeedMetaGs(env) {
   for (const p of prods.results) {
     const name = (p.name || "").trim();
     const usd = Number(p.price_usd) || 0;
-    const gs = Math.round((usd - DISCOUNT_GS_USD) * rate_gs);
+    const gs = Math.round((usd - (p.gs_sin_desc ? 0 : DISCOUNT_GS_USD)) * rate_gs);
     const brand = name.split(" ")[0] || "SUBLIME";
     const title = name || "Perfume SUBLIME";
     const desc = "Perfume " + title + " original. Venta mayorista de SUBLIME Perfumería.";
